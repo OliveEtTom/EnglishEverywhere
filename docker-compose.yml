@@ -1,0 +1,40 @@
+services:
+
+  # Python development environment
+  app:
+    build:
+      context: .
+      dockerfile: Back/Dockerfile
+
+    container_name: vocabulary-trainer
+
+    volumes:
+      - .:/workspace:cached
+
+    working_dir: /workspace
+
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+
+    depends_on:
+      - ollama
+
+    command: sleep infinity
+
+    stdin_open: true
+    tty: true
+
+  # Ollama LLM server
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
