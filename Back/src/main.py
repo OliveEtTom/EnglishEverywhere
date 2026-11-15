@@ -1,209 +1,335 @@
-
-#!/usr/bin/env python3
-
 import json
 import random
-import sys
+import ollama
 
-from ollama import chat
+# ============================================================
+# Configuration
+# ============================================================
 
 MODEL = "qwen2.5:1.5b"
+QUESTION_COUNT = 10
 
+# Adapt these topics to your original five sections.
+SECTIONS = {
+    1: "Meetings and communication",
+    2: "Project management",
+    3: "Team management and leadership",
+    4: "Software engineering",
+    5: "Business and strategy",
+}
+
+LEVELS = {
+    1: "Beginner",
+    2: "Intermediate",
+    3: "Advanced",
+}
+
+# Terminal colours
 GREEN = "\033[92m"
 RED = "\033[91m"
 YELLOW = "\033[93m"
-BLUE = "\033[94m"
-BOLD = "\033[1m"
+CYAN = "\033[96m"
 RESET = "\033[0m"
 
-SECTIONS = {
-    1: "Talking about your role and responsibilities",
-    2: "People management, coaching and leadership",
-    3: "Talking about problems and challenges",
-    4: "Explaining actions and decisions",
-    5: "Talking about results and outcomes",
-}
 
-def ask_llm(prompt, schema):
-    """Ask the model for a response matching a JSON schema."""
-    response = chat(
+# ============================================================
+# LLM helpers
+# ============================================================
+
+def ask_llm(prompt):
+    response = ollama.chat(
         model=MODEL,
         messages=[
             {
-                "role": "system",
-                "content": (
-                    "You are an English coach for a French-speaking "
-                    "Engineering Manager preparing for a job interview. "
-                    "Use natural, professional English. Keep exercises "
-                    "appropriate for B1-B2 English learners. "
-                    "Return only data matching the requested schema."
-                ),
-            },
-            {"role": "user", "content": prompt},
+                "role": "user",
+                "content": prompt
+            }
         ],
-        format=schema,
-        options={"temperature": 0.3},
+        format="json",
+        options={
+            "temperature": 0.3,
+            "num_ctx": 2048
+        }
     )
-    return json.loads(response.message.content)
 
-QUESTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "french": {"type": "string"},
-        "section": {"type": "integer"},
-        "hint": {"type": "string"},
-    },
-    "required": ["french", "section", "hint"],
-}
+    return json.loads(response["message"]["content"])
 
-EVALUATION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "correct": {"type": "boolean"},
-        "expected_answer": {"type": "string"},
-        "feedback": {"type": "string"},
-    },
-    "required": ["correct", "expected_answer", "feedback"],
-}
+def generate_question(section, direction, previous_questions):
+    """
+    Generate a translation question.
 
-def generate_question(previous_questions):
-    sections = "\n".join(
-        f"{number}. {description}"
-        for number, description in SECTIONS.items()
-    )
+    direction:
+        EN_TO_FR: English sentence, user translates into French.
+        FR_TO_EN: French sentence, user translates into English.
+    """
+
+    if direction == "EN_TO_FR":
+        source_language = "English"
+        target_language = "French"
+    else:
+        source_language = "French"
+        target_language = "English"
 
     prompt = f"""
-Generate ONE new French-to-English translation exercise.
+You are an English language teacher helping a French-speaking
+Engineering Manager prepare for job interviews.
 
-Choose one section at random from:
-{sections}
+Generate one realistic sentence about:
+{section}
 
-Requirements:
-- The French sentence must be natural and unambiguous.
-- The expected English must be useful in an Engineering Manager interview.
-- Use a short phrase or sentence.
-- Do not reveal the English translation.
-- Avoid repeating these previous French questions:
-{previous_questions[-20:]}
+The sentence must be suitable for an Engineering Manager interview.
 
-Return the French sentence, section number, and a short French hint.
+Translation direction:
+{source_language} to {target_language}
+
+Avoid sentences already used:
+{previous_questions}
+
+Return valid JSON with exactly these fields:
+{{
+    "sentence": "The sentence to translate",
+    "translation": "The expected translation"
+}}
+
+Do not include explanations.
 """
-    return ask_llm(prompt, QUESTION_SCHEMA)
 
-def evaluate_answer(french, user_answer, section):
+    result = ask_llm(prompt)
+
+    return result["sentence"], result["translation"]
+
+
+def evaluate_answer(sentence, expected, answer, direction, section):
+    """
+    Evaluate the user's translation.
+    Accept equivalent translations and ignore minor mistakes.
+    """
+
+    if direction == "EN_TO_FR":
+        source_language = "English"
+        target_language = "French"
+    else:
+        source_language = "French"
+        target_language = "English"
+
     prompt = f"""
-Evaluate a French-to-English translation exercise.
+You are an English language teacher helping a French-speaking
+Engineering Manager prepare for job interviews.
 
-Topic: {SECTIONS[section]}
-Original French: {french}
-Learner's English answer: {user_answer}
+Evaluate the following translation.
+
+Topic: {section}
+
+Original sentence ({source_language}):
+{sentence}
+
+Expected translation ({target_language}):
+{expected}
+
+User translation ({target_language}):
+{answer}
 
 Rules:
-- Accept natural, grammatically correct translations with the same meaning.
-- Accept different wording, synonyms and valid alternative constructions.
-- Do not require an exact match to one particular translation.
-- Ignore minor spelling or punctuation errors when meaning is clear.
-- Mark incorrect if the meaning changes significantly or the English
-  is not understandable.
-- Give concise feedback in English, suitable for a B1-B2 learner.
-- Provide one natural, professional English translation.
+- Accept translations with the same meaning.
+- Accept alternative natural formulations.
+- Ignore minor spelling or punctuation mistakes.
+- Do not require an exact word-for-word translation.
+- Be strict about incorrect grammar or vocabulary.
+- Give constructive feedback.
 
-Return:
-correct: whether the answer is acceptable
-expected_answer: a natural English translation
-feedback: brief feedback explaining the decision
+Return valid JSON:
+{{
+    "correct": true,
+    "feedback": "Short explanation of the result",
+    "suggestion": "A natural alternative translation"
+}}
 """
-    return ask_llm(prompt, EVALUATION_SCHEMA)
 
-def main():
-    print(f"{BOLD}{BLUE}")
-    print("=" * 52)
-    print(" ENGINEERING MANAGER VOCABULARY TRAINER")
-    print("=" * 52)
-    print(RESET)
+    return ask_llm(prompt)
 
-    try:
-        count = input("Number of questions (default 10): ").strip()
-        count = int(count) if count else 10
 
-        if not 1 <= count <= 100:
-            print("Please choose between 1 and 100 questions.")
-            return
+# ============================================================
+# Quiz
+# ============================================================
 
-    except ValueError:
-        print("Please enter a valid number.")
-        return
+def select_section():
+    print(f"\n{CYAN}Available sections:{RESET}")
+
+    for number, name in SECTIONS.items():
+        print(f"  {number}. {name}")
+
+    while True:
+        try:
+            choice = int(input("\nChoose a section: "))
+
+            if choice in SECTIONS:
+                return SECTIONS[choice]
+
+        except ValueError:
+            pass
+
+        print(f"{RED}Invalid selection.{RESET}")
+
+
+def select_level():
+    print(f"\n{CYAN}Available levels:{RESET}")
+
+    for number, name in LEVELS.items():
+        print(f"  {number}. {name}")
+
+    while True:
+        try:
+            choice = int(input("\nChoose a level: "))
+
+            if choice in LEVELS:
+                return choice
+
+        except ValueError:
+            pass
+
+        print(f"{RED}Invalid selection.{RESET}")
+
+
+
+def get_direction(level, question_number):
+
+    if level == 1:
+        return "EN_TO_FR"
+
+    if level == 2:
+        return "EN_TO_FR" if question_number % 2 == 1 else "FR_TO_EN"
+
+    if level == 3:
+        return "FR_TO_EN"
+
+
+def run_quiz(section, level):
+    level_name = LEVELS[level]
+
+    print("\n" + "=" * 60)
+    print(f"{CYAN}{section} - Level {level}: {level_name}{RESET}")
+    print("=" * 60)
+
+    print(f"\nYou will have to translate {QUESTION_COUNT} sentences.")
+    input("Press Enter to start...")
 
     score = 0
-    history = []
     mistakes = []
+    previous_questions = []
 
-    try:
-        for index in range(1, count + 1):
-            question = generate_question(history)
+    for number in range(1, QUESTION_COUNT + 1):
 
-            french = question["french"]
-            section = question["section"]
+        direction = get_direction(level, number)
 
-            if section not in SECTIONS:
-                print("The model returned an invalid section. Skipping.")
-                continue
+        print(f"\n{YELLOW}Question {number}/{QUESTION_COUNT}{RESET}")
 
-            print(f"\n{BLUE}{BOLD}Question {index}/{count}{RESET}")
-            print(f"Section {section}: {SECTIONS[section]}")
-            print(f"{YELLOW}French: {french}{RESET}")
-            print(f"Hint: {question['hint']}")
+        try:
+            sentence, expected = generate_question(
+                section,
+                direction,
+                previous_questions
+            )
+        except Exception as error:
+            print(f"{RED}Could not generate question: {error}{RESET}")
+            break
 
-            answer = input("English (or 'q' to quit): ").strip()
+        previous_questions.append(sentence)
 
-            if answer.lower() == "q":
-                break
+        if direction == "EN_TO_FR":
+            print(f"\nTranslate into French:\n{CYAN}{sentence}{RESET}")
+        else:
+            print(f"\nTranslate into English:\n{CYAN}{sentence}{RESET}")
 
-            if not answer:
-                print(f"{RED}Empty answer.{RESET}")
-                result = {
-                    "correct": False,
-                    "expected_answer": "(No answer provided)",
-                    "feedback": "Try writing a complete English expression.",
-                }
-            else:
-                result = evaluate_answer(french, answer, section)
+        answer = input("\nYour translation: ").strip()
 
-            history.append(french)
+        if not answer:
+            print(f"{RED}No answer provided.{RESET}")
 
-            if result["correct"]:
-                score += 1
-                print(f"{GREEN}{BOLD}CORRECT{RESET}")
-            else:
-                print(f"{RED}{BOLD}INCORRECT{RESET}")
-                mistakes.append((french, answer, result["expected_answer"]))
+        try:
+            result = evaluate_answer(
+                sentence,
+                expected,
+                answer,
+                direction,
+                section
+            )
+        except Exception as error:
+            print(f"{RED}Could not evaluate answer: {error}{RESET}")
+            continue
 
-            print(f"{GREEN}Suggested translation: "
-                  f"{result['expected_answer']}{RESET}")
-            print(f"Feedback: {result['feedback']}")
+        if result["correct"]:
+            score += 1
+            print(f"\n{GREEN}CORRECT!{RESET}")
+        else:
+            print(f"\n{RED}INCORRECT{RESET}")
+            mistakes.append({
+                "sentence": sentence,
+                "answer": answer,
+                "expected": expected
+            })
 
-    except KeyboardInterrupt:
-        print("\nQuiz interrupted.")
+        print(f"Feedback: {result['feedback']}")
+        print(f"Suggestion: {result['suggestion']}")
 
-    except Exception as error:
-        print(f"\n{RED}LLM error: {error}{RESET}")
-        print("Check that Ollama is running and the model is installed.")
+        print(f"\nScore: {score}/{number}")
 
-    finally:
-        if history:
-            # Score only questions actually answered.
-            total = len(history)
-            percentage = score / total * 100
+    # ========================================================
+    # Final results
+    # ========================================================
 
-            print(f"\n{BOLD}{BLUE}===== FINAL SCORE ====={RESET}")
-            print(f"Score: {score}/{total} ({percentage:.1f}%)")
+    total = QUESTION_COUNT
+    percentage = (score / total) * 100
 
-            if mistakes:
-                print(f"\n{RED}Review these answers:{RESET}")
-                for french, answer, expected in mistakes:
-                    print(f"\nFrench: {french}")
-                    print(f"Your answer: {answer}")
-                    print(f"Suggested: {expected}")
+    print("\n" + "=" * 60)
+    print(f"{CYAN}FINAL RESULTS{RESET}")
+    print("=" * 60)
+
+    print(f"Section: {section}")
+    print(f"Level: {level} - {level_name}")
+    print(f"Score: {score}/{total}")
+    print(f"Success rate: {percentage:.1f}%")
+
+    if percentage >= 80:
+        print(f"\n{GREEN}Excellent work!{RESET}")
+    elif percentage >= 60:
+        print(f"\n{YELLOW}Good effort! Keep practising.{RESET}")
+    else:
+        print(f"\n{RED}More practice is needed.{RESET}")
+
+    if mistakes:
+        print(f"\n{YELLOW}Review your mistakes:{RESET}")
+
+        for index, mistake in enumerate(mistakes, 1):
+            print(f"\n{index}. {mistake['sentence']}")
+            print(f"Your answer: {mistake['answer']}")
+            print(f"Suggested answer: {mistake['expected']}")
+
+    print("\n" + "=" * 60)
+
+
+# ============================================================
+# Main
+# ============================================================
+
+def main():
+    print(f"{CYAN}")
+    print("========================================")
+    print("     ENGINEERING MANAGER ENGLISH QUIZ")
+    print("========================================")
+    print(f"{RESET}")
+
+    while True:
+        section = select_section()
+        level = select_level()
+
+        run_quiz(section, level)
+
+        again = input("\nWould you like another exercise? (y/n): ")
+
+        if again.lower() != "y":
+            print("\nGoodbye!")
+            break
+
 
 if __name__ == "__main__":
     main()
