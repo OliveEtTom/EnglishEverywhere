@@ -55,68 +55,57 @@ def ask_llm(prompt):
     return json.loads(response["message"]["content"])
 
 def generate_question(section, direction, previous_questions):
-    """
-    Generate a translation question.
 
-    direction:
-        EN_TO_FR: English sentence, user translates into French.
-        FR_TO_EN: French sentence, user translates into English.
-    """
-
-    if direction == "EN_TO_FR":
-        source_language = "English"
-        target_language = "French"
-    else:
+    if direction == "FR_TO_EN":
         source_language = "French"
         target_language = "English"
+    else:
+        source_language = "English"
+        target_language = "French"
+
+    print (f"source_language={source_language}")
+    print (f"target_language={target_language}")
 
     prompt = f"""
-You are an English language teacher helping a French-speaking
-Engineering Manager prepare for job interviews.
+You are a French language teacher helping a native English speaker
+learn French for professional situations and Engineering Manager interviews.
 
-Generate one realistic sentence about:
-{section}
+TOPIC: {section}
 
-The sentence must be suitable for an Engineering Manager interview.
+STRICT TRANSLATION RULES:
+- The sentence to translate MUST be written entirely in {source_language}.
+- The expected translation MUST be written in {target_language}.
+- Never reverse the translation direction.
+- Generate exactly one sentence.
+- Use realistic professional vocabulary.
+- Adapt the complexity to the selected difficulty level.
 
-Translation direction:
-{source_language} to {target_language}
-
-Avoid sentences already used:
+PREVIOUS SENTENCES (avoid repeating them):
 {previous_questions}
 
 Return valid JSON with exactly these fields:
 {{
-    "sentence": "The sentence to translate",
-    "translation": "The expected translation"
+    "sentence": "Sentence written in {source_language}",
+    "translation": "Translation written in {target_language}"
 }}
-
-Do not include explanations.
 """
 
     result = ask_llm(prompt)
 
     return result["sentence"], result["translation"]
 
-
 def evaluate_answer(sentence, expected, answer, direction, section):
-    """
-    Evaluate the user's translation.
-    Accept equivalent translations and ignore minor mistakes.
-    """
 
-    if direction == "EN_TO_FR":
-        source_language = "English"
-        target_language = "French"
-    else:
+    if direction == "FR_TO_EN":
         source_language = "French"
         target_language = "English"
+    else:
+        source_language = "English"
+        target_language = "French"
 
     prompt = f"""
-You are an English language teacher helping a French-speaking
-Engineering Manager prepare for job interviews.
-
-Evaluate the following translation.
+You are a French language teacher helping a native English speaker
+learn French for professional situations.
 
 Topic: {section}
 
@@ -129,19 +118,22 @@ Expected translation ({target_language}):
 User translation ({target_language}):
 {answer}
 
+Evaluate the translation.
+
 Rules:
-- Accept translations with the same meaning.
-- Accept alternative natural formulations.
-- Ignore minor spelling or punctuation mistakes.
-- Do not require an exact word-for-word translation.
-- Be strict about incorrect grammar or vocabulary.
+- Accept equivalent translations with the same meaning.
+- Accept natural alternative formulations.
+- Be particularly attentive to French grammar and vocabulary.
+- Explain mistakes in English.
+- When appropriate, explain why a French expression is more natural
+  than a literal English translation.
 - Give constructive feedback.
 
 Return valid JSON:
 {{
     "correct": true,
-    "feedback": "Short explanation of the result",
-    "suggestion": "A natural alternative translation"
+    "feedback": "Explanation in English",
+    "suggestion": "A natural French formulation"
 }}
 """
 
@@ -193,13 +185,13 @@ def select_level():
 
 def get_direction(level, question_number):
 
-    if level == 1:
+    if level == 3:
         return "EN_TO_FR"
 
     if level == 2:
         return "EN_TO_FR" if question_number % 2 == 1 else "FR_TO_EN"
 
-    if level == 3:
+    if level == 1:
         return "FR_TO_EN"
 
 
